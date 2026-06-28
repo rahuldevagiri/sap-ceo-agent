@@ -49,7 +49,7 @@ def run_collection():
     print(f"Saved to: {output_path}")
 
     if len(unique_docs) < MIN_TARGET_DOCUMENTS:
-        print(
+        print( 
             f"WARNING: collected {len(unique_docs)} unique docs, "
             f"below target of {MIN_TARGET_DOCUMENTS}. "
             f"DuckDuckGo may be rate-limiting — re-run to top up."

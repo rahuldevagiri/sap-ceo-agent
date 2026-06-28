@@ -11,6 +11,42 @@ except ImportError:
     OLLAMA_AVAILABLE = False
 
 
+def _dict_to_text(d: dict) -> str:
+    """Render a dict the model wrongly returned (instead of a string) as a
+    readable one-line summary. Handles the competitor-signal shape it tends to
+    echo, then falls back to a title-like field, then to key:value pairs."""
+    if "competitor" in d:
+        text = str(d.get("competitor", "")).strip()
+        if d.get("count") is not None:
+            text += f" ({d.get('count')} signals)"
+        titles = d.get("titles") or []
+        if titles:
+            text += ": " + "; ".join(str(t) for t in titles[:2])
+        return text
+    for key in ("title", "name", "text", "summary", "activity", "description"):
+        if d.get(key):
+            return str(d[key])
+    return "; ".join(f"{k}: {v}" for k, v in d.items())
+
+
+def _coerce_text_list(value) -> list:
+    """Guarantee a list of readable strings (the model sometimes returns dicts
+    or nested objects where plain strings are expected)."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        value = [value]
+    out = []
+    for item in value:
+        if isinstance(item, str):
+            out.append(item)
+        elif isinstance(item, dict):
+            out.append(_dict_to_text(item))
+        else:
+            out.append(str(item))
+    return out
+
+
 class OllamaLLM:
     def __init__(self, model=None, temperature=None, num_ctx=None):
         self.model = model or LLM_MODEL
@@ -56,17 +92,12 @@ class OllamaLLM:
             "ceo_briefing": data.get("ceo_briefing", "")
         }
 
-        if not isinstance(normalized["opportunities"], list):
-            normalized["opportunities"] = [str(normalized["opportunities"])]
-
-        if not isinstance(normalized["risks"], list):
-            normalized["risks"] = [str(normalized["risks"])]
-
-        if not isinstance(normalized["competitor_activity"], list):
-            normalized["competitor_activity"] = [str(normalized["competitor_activity"])]
-
-        if not isinstance(normalized["trends_to_monitor"], list):
-            normalized["trends_to_monitor"] = [str(normalized["trends_to_monitor"])]
+        # Guarantee these are lists of readable strings (the model sometimes
+        # echoes structured dicts here, e.g. competitor-signal objects).
+        normalized["opportunities"] = _coerce_text_list(normalized["opportunities"])
+        normalized["risks"] = _coerce_text_list(normalized["risks"])
+        normalized["competitor_activity"] = _coerce_text_list(normalized["competitor_activity"])
+        normalized["trends_to_monitor"] = _coerce_text_list(normalized["trends_to_monitor"])
 
         if not isinstance(normalized["strategic_recommendations"], list):
             normalized["strategic_recommendations"] = []
@@ -113,6 +144,48 @@ class OllamaLLM:
 
         return normalized
 
+    def run_json(self, prompt: str, system_prompt: str = None) -> dict:
+        """Generic 'ask the model for one JSON object' call.
+
+        Unlike generate() (which normalizes into the CEO-briefing shape), this
+        returns whatever JSON the model produced, so the agent's Planner,
+        Decider, and Validator can each request their own structure. Uses
+        constrained JSON decoding (format='json') for reliability.
+        """
+        if not OLLAMA_AVAILABLE:
+            return {"ok": False, "error": "Ollama Python package is not installed.",
+                    "raw_output": None, "data": None}
+
+        system_prompt = system_prompt or (
+            "You are a precise reasoning assistant. Return only one valid JSON object. "
+            "Do not add markdown, comments, or text before or after the JSON."
+        )
+        try:
+            response = chat(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": prompt},
+                ],
+                options={"temperature": self.temperature, "num_ctx": self.num_ctx},
+                format="json",
+                keep_alive=LLM_KEEP_ALIVE,
+            )
+            content = (response["message"]["content"] or "").strip()
+            json_text = self._extract_json_block(content)
+            if not json_text:
+                return {"ok": False, "error": "No JSON object found in model output.",
+                        "raw_output": content, "data": None}
+            try:
+                parsed = json.loads(json_text)
+            except Exception as exc:
+                return {"ok": False, "error": f"JSON parsing failed: {repr(exc)}",
+                        "raw_output": content, "data": None}
+            return {"ok": True, "data": parsed, "raw_output": content, "error": None}
+        except Exception as exc:
+            return {"ok": False, "error": f"Ollama chat failed: {repr(exc)}",
+                    "raw_output": None, "data": None}
+
     def generate(self, prompt: str) -> dict:
         if not OLLAMA_AVAILABLE:
             return {
@@ -136,7 +209,7 @@ class OllamaLLM:
                     },
                     {
                         "role": "user",
-                        "content": prompt
+                       "content": prompt
                     }
                 ],
                 options={"temperature": self.temperature, "num_ctx": self.num_ctx},

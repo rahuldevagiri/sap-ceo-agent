@@ -5,11 +5,26 @@ from src.agent.llm_adapter import OllamaLLM
 
 
 class AICEOStrategist:
-    def __init__(self, llm_enabled=True):
-        self.retriever = RAGRetriever()
-        self.analyzer = IntelligenceAnalyzer()
+    def __init__(self, llm_enabled=True, retriever=None, analyzer=None, llm=None):
+        # Heavy components are lazy: created only when actually needed. This lets
+        # other modules (e.g. the agent's Recommender) reuse the pure
+        # prompt/fallback builders without loading the embedding model.
+        self._retriever = retriever
+        self._analyzer = analyzer
         self.llm_enabled = llm_enabled
-        self.llm = OllamaLLM()
+        self.llm = llm or OllamaLLM()
+
+    @property
+    def retriever(self):
+        if self._retriever is None:
+            self._retriever = RAGRetriever()
+        return self._retriever
+
+    @property
+    def analyzer(self):
+        if self._analyzer is None:
+            self._analyzer = IntelligenceAnalyzer()
+        return self._analyzer
 
     def build_prompt(self, company: str, analysis: dict) -> str:
         def slim(items, keys):

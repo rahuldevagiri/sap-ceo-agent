@@ -9,6 +9,7 @@ import html  # noqa: E402
 from datetime import datetime, timezone  # noqa: E402
 from email.utils import parsedate_to_datetime  # noqa: E402
 
+import altair as alt  # noqa: E402
 import pandas as pd  # noqa: E402
 import streamlit as st  # noqa: E402
 
@@ -20,6 +21,11 @@ from src.config import COMPANY_INDUSTRY, DEFAULT_INDUSTRY  # noqa: E402
 GREEN = "#84cc16"
 RED = "#ef4444"
 GRAY = "#a1a1aa"
+
+# Sentiment palette (high-contrast): Positive / Negative / Neutral
+SENT_POS = "#22c55e"   # green
+SENT_NEG = "#f97316"   # orange
+SENT_NEU = "#3b82f6"   # blue
 
 st.set_page_config(page_title="AI CEO – SAP", page_icon="📊", layout="wide")
 
@@ -660,15 +666,31 @@ with tab_sentiment:
         with chart_col:
             with st.container(border=True):
                 st.markdown("##### Sentiment distribution (analyzed documents)")
-                sentiment_df = pd.DataFrame(
-                    {"documents": [
+                sentiment_df = pd.DataFrame({
+                    "sentiment": ["Positive", "Negative", "Neutral"],
+                    "documents": [
                         sentiment.get("Positive", 0),
                         sentiment.get("Negative", 0),
                         sentiment.get("Neutral", 0),
-                    ]},
-                    index=["Positive", "Negative", "Neutral"],
-                ).rename_axis("sentiment")
-                st.bar_chart(sentiment_df, color=GREEN)
+                    ],
+                })
+                dist_chart = (
+                    alt.Chart(sentiment_df)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("sentiment:N", sort=["Positive", "Negative", "Neutral"], title="sentiment"),
+                        y=alt.Y("documents:Q", title="documents"),
+                        color=alt.Color(
+                            "sentiment:N",
+                            scale=alt.Scale(
+                                domain=["Positive", "Negative", "Neutral"],
+                                range=[SENT_POS, SENT_NEG, SENT_NEU],
+                            ),
+                            legend=None,
+                        ),
+                    )
+                )
+                st.altair_chart(dist_chart, use_container_width=True)
         with share_col:
             with st.container(border=True):
                 st.markdown("##### Share")
@@ -689,7 +711,7 @@ with tab_sentiment:
                     # order (Negative, Neutral, Positive), so order both to match.
                     st.line_chart(
                         trend_df[["Negative", "Neutral", "Positive"]],
-                        color=[RED, GRAY, GREEN],
+                        color=[SENT_NEG, SENT_NEU, SENT_POS],
                     )
                     st.caption("Monthly document counts by sentiment (dated documents only).")
                 else:
@@ -705,7 +727,7 @@ with tab_sentiment:
                         if col not in by_type_df.columns:
                             by_type_df[col] = 0
                     by_type_df = by_type_df[["Negative", "Neutral", "Positive"]].rename_axis("source type")
-                    st.bar_chart(by_type_df, color=[RED, GRAY, GREEN])
+                    st.bar_chart(by_type_df, color=[SENT_NEG, SENT_NEU, SENT_POS])
                 else:
                     st.info("No source-type sentiment available.")
     else:
